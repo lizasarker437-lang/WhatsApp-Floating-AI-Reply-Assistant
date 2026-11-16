@@ -1,0 +1,98 @@
+name: Build Android APK (SR SmartReply AI)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Verify Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Repository Checkout
+        uses: actions/checkout@v4
+
+      - name: 2. Auto-Extract Source ZIP (if uploaded as ZIP)
+        run: |
+          if [ ! -f "settings.gradle" ] && [ ! -f "SRSmartReplyAI/settings.gradle" ]; then
+            ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+            if [ -n "$ZIP_FILE" ]; then
+              echo "Extracting $ZIP_FILE..."
+              unzip -q "$ZIP_FILE" -d extracted_project
+            fi
+          fi
+
+      - name: 3. Locate Android Project Directory
+        id: locate
+        run: |
+          if [ -f "settings.gradle" ]; then
+            echo "project_dir=." >> $GITHUB_OUTPUT
+          elif [ -f "SRSmartReplyAI/settings.gradle" ]; then
+            echo "project_dir=SRSmartReplyAI" >> $GITHUB_OUTPUT
+          else
+            FOUND=$(find . -maxdepth 3 -name "settings.gradle" | head -n 1)
+            DIR=$(dirname "$FOUND")
+            echo "project_dir=$DIR" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 4. JDK 17 Setup
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 5. Android SDK Setup
+        uses: android-actions/setup-android@v3
+
+      - name: 6. Gradle 8.6 Setup & Wrapper Generation
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.6'
+
+      - name: 7. Generate Gradle Wrapper & Validate Structure
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          gradle wrapper --gradle-version 8.6
+          chmod +x gradlew
+          test -f app/src/main/AndroidManifest.xml
+
+      - name: 8. Run Unit Tests
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: 9. Build Debug APK
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: 10. APK Verification
+        working-directory: ${{ steps.locate.outputs.project_dir }}
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK file was not generated!"
+            exit 1
+          fi
+          echo "Verified APK: $APK_PATH"
+          ls -lh "$APK_PATH"
+
+      - name: 11. Upload Built APK Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SR-SmartReply-AI-Debug-APK
+          path: ${{ steps.locate.outputs.project_dir }}/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: 12. Upload Build Error Logs (On Failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-Build-Error-Logs
+          path: |
+            ${{ steps.locate.outputs.project_dir }}/app/build/reports/
+            ${{ steps.locate.outputs.project_dir }}/build/reports/
+          if-no-files-found: ignore
