@@ -1,4 +1,4 @@
-name: Build Android APK (SR SmartReply AI v3.2 Fixed)
+name: Build Android APK (SR SmartReply AI v3.4.0)
 
 on:
   push:
@@ -80,14 +80,9 @@ jobs:
         with:
           gradle-version: '8.6'
 
-      - name: 7. Fix Word-Boundary Match & Generate Gradle Wrapper
+      - name: 7. Generate Gradle Wrapper & Validate Structure
         working-directory: ${{ steps.locate.outputs.project_dir }}
         run: |
-          PARSER_FILE="app/src/main/java/com/srcreationfarm/smartreplyai/ai/ReplyJsonParser.kt"
-          if [ -f "$PARSER_FILE" ]; then
-            sed -i 's/"tmi k"/" tmi k "/g' "$PARSER_FILE"
-            sed -i 's/"Haha moshkora korcho naki? Etokhon tomar sathei to kotha bolchi!"/"Haha moshkora korcho naki? Ami Shahriar, etokhon tomar sathei to kotha bolchi!"/g' "$PARSER_FILE"
-          fi
           gradle wrapper --gradle-version 8.6
           chmod +x gradlew
           test -f app/src/main/AndroidManifest.xml
