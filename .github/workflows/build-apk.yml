@@ -1,4 +1,4 @@
-name: Build Android APK (SR SmartReply AI)
+name: Build Android APK (SR SmartReply AI v2.2)
 
 on:
   push:
