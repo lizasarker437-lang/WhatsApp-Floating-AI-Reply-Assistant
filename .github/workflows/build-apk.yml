@@ -1,4 +1,4 @@
-name: Build Android APK (SR SmartReply AI v4.0.0)
+name: Build Android APK (SR SmartReply AI v4.0.1)
 
 on:
   push:
@@ -80,9 +80,14 @@ jobs:
         with:
           gradle-version: '8.6'
 
-      - name: 7. Generate Gradle Wrapper & Validate Structure
+      - name: 7. Generate Gradle Wrapper & Verify Imports
         working-directory: ${{ steps.locate.outputs.project_dir }}
         run: |
+          MAIN_KT="app/src/main/java/com/srcreationfarm/smartreplyai/ui/MainActivity.kt"
+          if [ -f "$MAIN_KT" ] && ! grep -q "import android.view.View" "$MAIN_KT"; then
+            sed -i 's/import android.text.TextWatcher/import android.text.TextWatcher
+import android.view.View/g' "$MAIN_KT"
+          fi
           gradle wrapper --gradle-version 8.6
           chmod +x gradlew
           test -f app/src/main/AndroidManifest.xml
