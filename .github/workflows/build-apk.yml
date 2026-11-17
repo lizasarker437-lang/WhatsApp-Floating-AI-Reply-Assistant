@@ -1,4 +1,4 @@
-name: Build Android APK (SR SmartReply AI v2.2)
+name: Build Android APK (SR SmartReply AI v2.3)
 
 on:
   push:
@@ -16,13 +16,26 @@ jobs:
       - name: 1. Repository Checkout
         uses: actions/checkout@v4
 
-      - name: 2. Auto-Extract Source ZIP (if uploaded as ZIP)
+      - name: 2. Smart Auto-Extract Latest Source ZIP
         run: |
           if [ ! -f "settings.gradle" ] && [ ! -f "SRSmartReplyAI/settings.gradle" ]; then
-            ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
-            if [ -n "$ZIP_FILE" ]; then
-              echo "Extracting $ZIP_FILE..."
-              unzip -oq "$ZIP_FILE" -d extracted_project
+            BEST_ZIP=""
+            BEST_VER=-1
+            for z in $(find . -maxdepth 2 -name "*.zip"); do
+              VER=$(unzip -p "$z" "*/app/build.gradle" "app/build.gradle" 2>/dev/null | grep -E "versionCode[[:space:]]+[0-9]+" | awk '{print $2}' | head -n 1)
+              if [ -z "$VER" ]; then
+                VER=0
+              fi
+              echo "Found ZIP: $z (versionCode=$VER)"
+              if [ "$VER" -gt "$BEST_VER" ]; then
+                BEST_VER=$VER
+                BEST_ZIP="$z"
+              fi
+            done
+            if [ -n "$BEST_ZIP" ]; then
+              echo "Selecting newest ZIP: $BEST_ZIP (versionCode=$BEST_VER)"
+              rm -rf extracted_project
+              unzip -oq "$BEST_ZIP" -d extracted_project
             fi
           fi
 
@@ -34,7 +47,7 @@ jobs:
           elif [ -f "SRSmartReplyAI/settings.gradle" ]; then
             echo "project_dir=SRSmartReplyAI" >> $GITHUB_OUTPUT
           else
-            FOUND=$(find . -maxdepth 3 -name "settings.gradle" | head -n 1)
+            FOUND=$(find extracted_project . -maxdepth 3 -name "settings.gradle" 2>/dev/null | head -n 1)
             if [ -z "$FOUND" ]; then
               echo "ERROR: settings.gradle not found in repository!"
               exit 1
