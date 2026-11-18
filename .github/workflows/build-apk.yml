@@ -5,52 +5,106 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Find and extract Android source archive
+
+      - name: Extract uploaded source ZIP if necessary
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f settings.gradle ] && [ -d app ]; then
-            echo 'Source already extracted.'
+          if [[ -f settings.gradle && -f app/build.gradle ]]; then
+            echo "Android project already at repository root."
           else
-            ZIP=$(find . -maxdepth 2 -type f -name '*.zip' | sort | head -n 1)
-            if [ -z "$ZIP" ]; then echo 'ERROR: Upload the source ZIP to repository root.'; exit 1; fi
-            mkdir -p /tmp/sr-source
-            unzip -q "$ZIP" -d /tmp/sr-source
-            PROJECT=$(find /tmp/sr-source -maxdepth 4 -type f -name settings.gradle | head -n 1)
-            if [ -z "$PROJECT" ]; then echo 'ERROR: settings.gradle not found in ZIP'; exit 1; fi
-            SRC=$(dirname "$PROJECT")
-            cp -a "$SRC"/. .
+            ZIP="$(find . -maxdepth 2 -type f -name '*.zip' | sort | head -n 1)"
+            if [[ -z "$ZIP" ]]; then
+              echo "::error::Upload the project source ZIP at repository root, or extract its contents."
+              exit 1
+            fi
+            mkdir -p "$RUNNER_TEMP/sr-extracted"
+            unzip -q "$ZIP" -d "$RUNNER_TEMP/sr-extracted"
+            SETTINGS="$(find "$RUNNER_TEMP/sr-extracted" -maxdepth 5 -name settings.gradle -type f | head -n 1)"
+            if [[ -z "$SETTINGS" ]]; then
+              echo "::error::ZIP must contain settings.gradle and app/build.gradle."
+              exit 1
+            fi
+            cp -a "$(dirname "$SETTINGS")/." .
           fi
+          test -f settings.gradle
           test -f app/build.gradle
           test -f app/src/main/AndroidManifest.xml
-      - name: Configure JDK 17
+
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Configure Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install Android 34 SDK
-        run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0' 'platform-tools'
-      - name: Configure Gradle 8.6
+
+      - name: Configure Android SDK from GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub-hosted Ubuntu runners already include Android SDK command-line tools.
+          # Do NOT run android-actions/setup-android: its attempt to install the
+          # obsolete "tools" package caused the previous build to fail.
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          if [[ ! -d "$SDK" ]]; then
+            echo "::error::GitHub runner Android SDK directory is missing: $SDK"
+            exit 1
+          fi
+          SDKMANAGER="$(find "$SDK/cmdline-tools" -maxdepth 3 -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [[ -z "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+          fi
+          if [[ -z "$SDKMANAGER" ]]; then
+            echo "::error::Cannot locate sdkmanager in the runner SDK."
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          # Install ONLY current packages; never request the removed 'tools' package.
+          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK" --install             "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+          test -f "$SDK/platforms/android-34/android.jar"
+          test -x "$SDK/build-tools/34.0.0/aapt2"
+
+      - name: Set up Gradle 8.6
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.6'
+
+      - name: Verify project configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -version
+          gradle --version
+          grep -q "compileSdk 34" app/build.gradle
+          grep -q "versionName \"4.3.2\"" app/build.gradle
+
       - name: Run JVM unit tests
-        run: gradle --no-daemon testDebugUnitTest --stacktrace
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug --stacktrace
-      - name: Check APK exists
-        run: test -s app/build/outputs/apk/debug/app-debug.apk
+        run: gradle --no-daemon --stacktrace testDebugUnitTest
+
+      - name: Compile and build debug APK
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: SR-SmartReply-AI-v4.3.2-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
